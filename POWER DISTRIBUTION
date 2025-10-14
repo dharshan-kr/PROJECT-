@@ -49,13 +49,13 @@ Absolutely, Dharshan. Here's your **cleaned-up, ready-to-copy version** of the p
 - **Battery**: 5 V, 1000 mAh Li-ion  
 - **DC-DC efficiency**: 85%  
 - **Effective energy**:  
-  \[
+  
   E = 5 \times 1 \times 0.85 = \boxed{4.25 \text{ Wh}}
-  \]
-- **Runtime**:  
-  \[
+  
+Runtime  
+  
   T = \frac{4.25}{0.44} = \boxed{9.66 \text{ hours}}
-  \]
+  
 
 ---
 
@@ -72,15 +72,12 @@ Absolutely, Dharshan. Here's your **cleaned-up, ready-to-copy version** of the p
 | Transition Overhead | —           | —          | +10.00 mA        |
 | **Total System Avg**| —           | —          | **108.17 mA**    |
 
-- **System Power**:  
-  \[
+System Power  
+  
   P = 5 \times 0.10817 = \boxed{0.5408 \text{ W}}
-  \]
-- **Runtime**:  
-  \[
+  
+- Runtime
   T = \frac{4.25}{0.5408} = \boxed{7.86 \text{ hours}}
-  \]
 
----
 
-Let me know if you’d like this formatted into a LaTeX report, slide deck, or embedded into your project documentation.
+
