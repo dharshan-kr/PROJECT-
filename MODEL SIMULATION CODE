@@ -1,0 +1,80 @@
+# 📦 Install dependencies
+!pip install pandas matplotlib seaborn
+
+# 📁 Import libraries
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime, timedelta
+
+# 🐄 Input animal names manually
+animal_names = input("Enter animal names separated by commas: ").split(",")
+animal_names = [name.strip() for name in animal_names]
+n_points = 10  # Number of time samples per animal
+timestamps = [datetime.now() - timedelta(minutes=5*i) for i in range(n_points)]
+
+# 🧪 Generate synthetic data
+np.random.seed(42)
+data = []
+
+for animal in animal_names:
+    for t in timestamps:
+        stress_state = np.random.choice(["Normal", "Stressed", "Happy"], p=[0.5, 0.3, 0.2])
+        pulse = np.random.normal(75 if stress_state=="Normal" else 95 if stress_state=="Stressed" else 70, 5)
+        temperature = np.random.normal(36.8 if stress_state=="Normal" else 38.0 if stress_state=="Stressed" else 36.5, 0.3)
+        latitude = 11.34 + np.random.rand() * 0.01
+        longitude = 77.72 + np.random.rand() * 0.01
+
+        data.append({
+            "animal": animal,
+            "date": t.strftime("%Y-%m-%d"),
+            "time": t.strftime("%H:%M:%S"),
+            "day": t.strftime("%A"),
+            "timestamp": t,
+            "pulse": round(pulse, 1),
+            "temperature": round(temperature, 2),
+            "stress_state": stress_state,
+            "latitude": round(latitude, 6),
+            "longitude": round(longitude, 6)
+        })
+
+df = pd.DataFrame(data)
+df.sort_values("timestamp", inplace=True)
+df["time_str"] = df["timestamp"].dt.strftime("%H:%M")
+df.head()
+# Group by time and stress state
+stress_counts = df.groupby(["time_str", "stress_state"]).size().reset_index(name="count")
+
+# Pivot for plotting
+stress_pivot = stress_counts.pivot(index="time_str", columns="stress_state", values="count").fillna(0)
+
+# Plot multiple stress distributions over time
+plt.figure(figsize=(14, 6))
+for stress_type in stress_pivot.columns:
+    plt.plot(stress_pivot.index, stress_pivot[stress_type], marker="o", label=stress_type)
+
+plt.title("Stress Level Distribution Over Time")
+plt.xlabel("Time")
+plt.ylabel("Count")
+plt.xticks(rotation=45)
+plt.legend(title="Stress State")
+plt.tight_layout()
+plt.show()
+plt.figure(figsize=(12, 6))
+sns.lineplot(data=df, x="timestamp", y="pulse", hue="animal", marker="o")
+plt.title("Pulse Trends per Animal")
+plt.ylabel("Pulse (bpm)")
+plt.xlabel("Time")
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+plt.figure(figsize=(12, 6))
+sns.lineplot(data=df, x="timestamp", y="temperature", hue="animal", marker="o")
+plt.title("Temperature Trends per Animal")
+plt.ylabel("Temperature (°C)")
+plt.xlabel("Time")
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
