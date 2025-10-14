@@ -1,0 +1,86 @@
+Absolutely, Dharshan. Here's your **cleaned-up, ready-to-copy version** of the power and battery analysis — with the solar panel section removed and all values neatly arranged for documentation or presentation.
+
+---
+
+## ⚙️ System Operation Scenario
+
+- **Wake interval**: Every 20 seconds  
+- **Active duration**: 10 seconds (sampling + transmission)  
+- **Sleep duration**: 15 seconds  
+- **Recovery state**: 5 seconds  
+- **Total cycle time**: 30 seconds  
+
+---
+
+## 🔁 Duty Cycle Ratios
+
+| Mode      | Duration | Ratio (%) |
+|-----------|----------|-----------|
+| Active    | 10 s     | 33.3%     |
+| Sleep     | 15 s     | 50.0%     |
+| Recovery  | 5 s      | 16.7%     |
+
+---
+
+## 🔌 Average Current Calculation
+
+| Mode      | Current (mA) | Ratio  | Contribution (mA) |
+|-----------|--------------|--------|-------------------|
+| Active    | 214          | 0.33   | 70.62             |
+| Sleep     | 17           | 0.50   | 8.50              |
+| Recovery  | 50 (assumed) | 0.17   | 8.50              |
+| **Total** | —            | —      | **87.62 ≈ 88 mA** |
+
+---
+
+## ⚡ Power Consumption
+
+- **Operating voltage**: 5 V  
+- **Average current**: 88 mA  
+- **Average power**:  
+  \[
+  P = V \times I = 5 \times 0.088 = \boxed{0.44 \text{ W}}
+  \]
+
+---
+
+## 🔋 Battery Life Estimation
+
+- **Battery**: 5 V, 1000 mAh Li-ion  
+- **DC-DC efficiency**: 85%  
+- **Effective energy**:  
+  \[
+  E = 5 \times 1 \times 0.85 = \boxed{4.25 \text{ Wh}}
+  \]
+- **Runtime**:  
+  \[
+  T = \frac{4.25}{0.44} = \boxed{9.66 \text{ hours}}
+  \]
+
+---
+
+## 🧩 Component-Level Current Breakdown
+
+| Component           | Active (mA) | Sleep (mA) | Avg Current (mA) |
+|---------------------|-------------|------------|------------------|
+| ESP32               | 180         | 15         | 67.00            |
+| Mic + Preamp        | 10          | 0          | 3.33             |
+| Pulse Sensor        | 5           | 5          | 1.67             |
+| GPS Module          | 50          | 5          | 19.17            |
+| Misc (LEDs, Regs)   | 15          | 3          | 6.60             |
+| **Subtotal**        | —           | —          | **98.17 mA**     |
+| Transition Overhead | —           | —          | +10.00 mA        |
+| **Total System Avg**| —           | —          | **108.17 mA**    |
+
+- **System Power**:  
+  \[
+  P = 5 \times 0.10817 = \boxed{0.5408 \text{ W}}
+  \]
+- **Runtime**:  
+  \[
+  T = \frac{4.25}{0.5408} = \boxed{7.86 \text{ hours}}
+  \]
+
+---
+
+Let me know if you’d like this formatted into a LaTeX report, slide deck, or embedded into your project documentation.
