@@ -1,0 +1,44 @@
+import numpy as np
+import pandas as pd
+
+np.random.seed(42)
+n = 1000  # Number of samples
+
+# Simulate stress states
+stress_states = np.random.choice(["Normal", "Stressed", "Happy"], size=n, p=[0.5, 0.3, 0.2])
+
+# Generate features with realistic distributions and correlations
+pulse = []
+temperature = []
+fft_feature = []
+
+for state in stress_states:
+    if state == "Normal":
+        pulse.append(np.random.normal(75, 5))
+        temperature.append(np.random.normal(36.8, 0.3))
+        fft_feature.append(np.random.normal(0.3, 0.1))
+    elif state == "Stressed":
+        pulse.append(np.random.normal(95, 7))
+        temperature.append(np.random.normal(38.0, 0.4))
+        fft_feature.append(np.random.normal(0.8, 0.15))
+    else:  # Happy
+        pulse.append(np.random.normal(70, 4))
+        temperature.append(np.random.normal(36.5, 0.2))
+        fft_feature.append(np.random.normal(0.2, 0.05))
+
+# Clip values to realistic ranges
+pulse = np.clip(pulse, 50, 130)
+temperature = np.clip(temperature, 35.0, 39.5)
+fft_feature = np.clip(fft_feature, 0.05, 1.5)
+
+# Assemble DataFrame
+df = pd.DataFrame({
+    "pulse": np.round(pulse, 1),
+    "temperature": np.round(temperature, 2),
+    "fft_feature": np.round(fft_feature, 3),
+    "stress_state": stress_states
+})
+
+# Save to CSV
+df.to_csv("synthetic_stress_dataset.csv", index=False)
+print("Dataset saved as synthetic_stress_dataset.csv")
