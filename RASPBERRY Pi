@@ -1,0 +1,74 @@
+from flask import Flask, request
+import numpy as np
+import joblib
+import datetime
+import firebase_admin
+from firebase_admin import credentials, db
+import board
+import busio
+from adafruit_ssd1306 import SSD1306_I2C
+from PIL import Image, ImageDraw, ImageFont
+
+# Initialize Firebase
+cred = credentials.Certificate("serviceAccountKey.json")
+firebase_admin.initialize_app(cred, {
+    'databaseURL': 'https://your-project-id.firebaseio.com/'
+})
+
+# Load ML model
+model = joblib.load("stress_model.pkl")
+
+# Initialize OLED
+i2c = busio.I2C(board.SCL, board.SDA)
+display = SSD1306_I2C(128, 64, i2c)
+display.fill(0)
+display.show()
+
+app = Flask(__name__)
+
+@app.route('/data', methods=['POST'])
+def receive_data():
+    data = request.get_json()
+    mic = data.get("mic", 0)
+    pulse = data.get("pulse", 0)
+    temperature = data.get("temperature", 0.0)
+    latitude = data.get("latitude", 0.0)
+    longitude = data.get("longitude", 0.0)
+    animal = data.get("animal", "Unknown")
+
+    # FFT feature simulation
+    fft_feature = np.log1p(mic)
+    features = np.array([[pulse, temperature, fft_feature]])
+    stress_state = model.predict(features)[0]
+
+    # Timestamp
+    timestamp = datetime.datetime.now().isoformat()
+
+    # Upload to Firebase
+    ref = db.reference('animal_data')
+    ref.push({
+        "animal": animal,
+        "timestamp": timestamp,
+        "pulse": pulse,
+        "temperature": temperature,
+        "stress_state": stress_state,
+        "latitude": latitude,
+        "longitude": longitude
+    })
+
+    # Display on OLED
+    display.fill(0)
+    image = Image.new("1", (display.width, display.height))
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default()
+    draw.text((0, 0), f"Animal: {animal}", font=font, fill=255)
+    draw.text((0, 16), f"HR: {pulse}", font=font, fill=255)
+    draw.text((0, 32), f"Temp: {temperature:.1f}", font=font, fill=255)
+    draw.text((0, 48), f"Stress: {stress_state}", font=font, fill=255)
+    display.image(image)
+    display.show()
+
+    return "Data received", 200
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
