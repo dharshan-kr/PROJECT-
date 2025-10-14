@@ -1,0 +1,95 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <TinyGPSPlus.h>
+
+// Wi-Fi credentials
+const char* ssid = "Your_SSID";
+const char* password = "Your_PASSWORD";
+const char* serverURL = "http://192.168.1.100:5000/data";  // Raspberry Pi IP
+
+// OLED setup
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+// GPS setup
+TinyGPSPlus gps;
+HardwareSerial GPSSerial(1);  // Use UART1
+#define RXD2 16  // GPS TX → ESP32 RX
+#define TXD2 17  // GPS RX → ESP32 TX
+
+// Sensor pins
+const int micPin = 32;
+const int pulsePin = 33;
+const int tempPin = 34;
+
+// Animal name
+const char* animalName = "Cow A1";
+
+void setup() {
+  Serial.begin(115200);
+  GPSSerial.begin(9600, SERIAL_8N1, RXD2, TXD2);
+
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println("Animal: " + String(animalName));
+  display.display();
+}
+
+void loop() {
+  // Read sensors
+  int micRaw = analogRead(micPin);
+  int pulseRaw = analogRead(pulsePin);
+  int tempRaw = analogRead(tempPin);
+  float temperature = (tempRaw / 4095.0) * 3.3 * 100.0;
+
+  // Read GPS
+  while (GPSSerial.available()) {
+    gps.encode(GPSSerial.read());
+  }
+
+  float latitude = gps.location.isValid() ? gps.location.lat() : 0.0;
+  float longitude = gps.location.isValid() ? gps.location.lng() : 0.0;
+
+  // Update OLED
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.println("Animal: " + String(animalName));
+  display.println("HR: " + String(pulseRaw));
+  display.println("Temp: " + String(temperature, 1));
+  display.display();
+
+  // Prepare JSON
+  String jsonData = "{";
+  jsonData += "\"animal\":\"" + String(animalName) + "\",";
+  jsonData += "\"mic\":" + String(micRaw) + ",";
+  jsonData += "\"pulse\":" + String(pulseRaw) + ",";
+  jsonData += "\"temperature\":" + String(temperature, 2) + ",";
+  jsonData += "\"latitude\":" + String(latitude, 6) + ",";
+  jsonData += "\"longitude\":" + String(longitude, 6);
+  jsonData += "}";
+
+  // Send via HTTP POST
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin(serverURL);
+    http.addHeader("Content-Type", "application/json");
+    int httpResponseCode = http.POST(jsonData);
+    Serial.println("POST Response: " + String(httpResponseCode));
+    http.end();
+  }
+
+  delay(5000);
+}
