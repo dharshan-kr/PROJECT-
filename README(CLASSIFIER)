@@ -1,0 +1,90 @@
+# 🧠 ML Rules, Conditions, and Ranges  
+## Bioacoustic-Based Livestock Stress Monitoring System
+
+This document describes the **rule-based logic, physiological ranges, conditions, and alert criteria** used in the proposed machine learning–based livestock stress detection system.  
+The system combines **domain-specific rules** with a **Random Forest classifier** to ensure accurate and reliable stress prediction.
+
+---
+
+## 1. Physiological Parameter Ranges (Animal-Specific)
+
+The following normal physiological ranges are defined for each animal species based on veterinary standards.
+
+### BOVINE (Cow)
+- Temperature: 37.8 – 39.2 °C  
+- Pulse Rate: 40 – 80 bpm  
+- Respiration Rate: 10 – 30 bpm  
+
+### CANINE (Dog)
+- Temperature: 38.0 – 39.2 °C  
+- Pulse Rate: 70 – 120 bpm  
+- Respiration Rate: 18 – 34 bpm  
+
+### EQUINE (Horse)
+- Temperature: 37.2 – 38.3 °C  
+- Pulse Rate: 28 – 44 bpm  
+- Respiration Rate: 8 – 16 bpm  
+
+### OVINE (Sheep)
+- Temperature: 38.5 – 40.0 °C  
+- Pulse Rate: 60 – 90 bpm  
+- Respiration Rate: 12 – 20 bpm  
+
+### CAPRINE (Goat)
+- Temperature: 38.5 – 39.7 °C  
+- Pulse Rate: 70 – 80 bpm  
+- Respiration Rate: 12 – 20 bpm  
+
+### FELINE (Cat)
+- Temperature: 38.1 – 39.2 °C  
+- Pulse Rate: 120 – 140 bpm  
+- Respiration Rate: 15 – 30 bpm  
+
+### PORCINE (Pig)
+- Temperature: 38.7 – 39.8 °C  
+- Pulse Rate: 60 – 90 bpm  
+- Respiration Rate: 10 – 20 bpm  
+
+---
+
+## 2. Vibration / Bioacoustic Threshold Rules
+
+Bioacoustic activity is evaluated using statistical thresholds:
+
+- Mean vibration value: μ  
+- Standard deviation: σ  
+
+### Conditions:
+- Abnormal vibration:
+Vibration > μ + σ
+
+- Highly abnormal vibration:
+Vibration > μ + 2σ
+
+
+---
+
+## 3. Rule-Based Scoring Mechanism
+
+Each incoming sensor sample is evaluated using the following scoring logic:
+
+| Condition | Score |
+|---------|-------|
+| Temperature outside normal range | +1 |
+| Pulse rate outside normal range | +1 |
+| Respiration rate outside normal range | +1 |
+| Vibration exceeds threshold | +1 |
+
+---
+
+## 4. Stress Level Assignment Rules
+
+Based on the cumulative score:
+
+| Total Score | Stress Level | Label |
+|------------|-------------|------|
+| 0 – 1 | 0 | Normal |
+| 2 | 1 | Moderate Stress |
+| ≥ 3 | 2 | High Stress |
+
+These labels are used both for **training** and **validating** the machine learning moDEL
