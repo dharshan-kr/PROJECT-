@@ -1,0 +1,214 @@
+import pandas as pd
+import requests
+import time
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from collections import deque
+import joblib
+import os
+from datetime import datetime
+
+# =================================================
+# BOOT BANNER
+# =================================================
+print("\n==============================================")
+print("   BIOACOUSTIC ML STRESS MONITORING SYSTEM   ")
+print("==============================================")
+print("🚀 ML Stress Engine Initializing...\n")
+
+# =================================================
+# ThingSpeak Configuration
+# =================================================
+CH1_ID = 3250719
+CH1_READ_KEY = "MNFBXHDDNAWFNT6A"
+
+CH2_ID = 3250740
+CH2_READ_KEY = "3H8D8J44EPJ6T3R8"
+CH2_WRITE_KEY = "SG3EC4A5D8IBNBYY"
+
+READ_CH1 = f"https://api.thingspeak.com/channels/{CH1_ID}/feeds.csv?results=40&api_key={CH1_READ_KEY}"
+READ_CH2 = f"https://api.thingspeak.com/channels/{CH2_ID}/feeds.csv?results=5&api_key={CH2_READ_KEY}"
+WRITE_URL = "https://api.thingspeak.com/update"
+
+print("☁️ ThingSpeak Configuration Loaded")
+print(f"   Channel 1 ID : {CH1_ID}")
+print(f"   Channel 2 ID : {CH2_ID}\n")
+
+# =================================================
+# DATA STORAGE
+# =================================================
+DATA_DIR = "data_logs"
+os.makedirs(DATA_DIR, exist_ok=True)
+
+CH1_FILE = f"{DATA_DIR}/channel1_sensor_data.csv"
+CH2_FILE = f"{DATA_DIR}/channel2_stress_data.csv"
+COMBINED_FILE = f"{DATA_DIR}/combined_ml_dataset.csv"
+
+for path, cols in [
+    (CH1_FILE, ["timestamp","temp","pulse","resp","vib"]),
+    (CH2_FILE, ["timestamp","animal_code","stress","alert"]),
+    (COMBINED_FILE, ["timestamp","animal_code","temp","pulse","resp","vib","stress","alert"])
+]:
+    if not os.path.exists(path):
+        pd.DataFrame(columns=cols).to_csv(path, index=False)
+
+print("📁 Data logging directory ready:", DATA_DIR)
+
+# =================================================
+# Animal Profiles
+# =================================================
+ANIMAL_PROFILES = {
+    0: {"name": "BOVINE",  "temp": (37.8, 39.2), "pulse": (40, 80),  "resp": (10, 30)},
+    1: {"name": "CANINE",  "temp": (38.0, 39.2), "pulse": (70,120),  "resp": (18, 34)},
+    2: {"name": "EQUINE",  "temp": (37.2, 38.3), "pulse": (28, 44),  "resp": (8, 16)},
+    3: {"name": "OVINE",   "temp": (38.5, 40.0), "pulse": (60, 90),  "resp": (12, 20)},
+    4: {"name": "CAPRINE", "temp": (38.5, 39.7), "pulse": (70, 80),  "resp": (12, 20)},
+    5: {"name": "FELINE",  "temp": (38.1, 39.2), "pulse": (120,140), "resp": (15, 30)},
+    6: {"name": "PORCINE", "temp": (38.7, 39.8), "pulse": (60, 90),  "resp": (10, 20)}
+}
+
+# =================================================
+# STATE
+# =================================================
+stress_history = deque(maxlen=3)
+current_animal = None
+model = None
+
+alert_counter = 0
+normal_counter = 0
+
+ALERT_THRESHOLD = 5
+COOLDOWN_THRESHOLD = 3
+
+# =================================================
+# SAFE RESET FUNCTION
+# =================================================
+def reset_thingspeak_alert():
+    try:
+        requests.post(WRITE_URL, {
+            "api_key": CH2_WRITE_KEY,
+            "field1": 0,
+            "field3": 0
+        })
+        print("🧹 ALERT RESET: Channel 2 fields cleared")
+    except Exception as e:
+        print("⚠️ Alert reset failed:", e)
+
+# =================================================
+# LABEL GENERATION
+# =================================================
+def generate_label(row, profile, vib_mean, vib_std):
+    score = 0
+    if row.temp < profile["temp"][0] or row.temp > profile["temp"][1]: score += 1
+    if row.pulse < profile["pulse"][0] or row.pulse > profile["pulse"][1]: score += 1
+    if row.resp < profile["resp"][0] or row.resp > profile["resp"][1]: score += 1
+    if row.vib > vib_mean + vib_std: score += 1
+    return 0 if score <= 1 else 1 if score == 2 else 2
+
+# =================================================
+# ALERT RULE
+# =================================================
+def check_alert(animal_code, stress, vib, vib_mean, vib_std):
+    if animal_code in [0, 3, 4]: return stress == 2
+    if animal_code in [1, 5]: return stress >= 1
+    if animal_code == 2: return stress_history.count(2) >= 2
+    if animal_code == 6: return stress == 2 or vib > vib_mean + 2 * vib_std
+    return False
+
+# =================================================
+# MODEL HANDLING
+# =================================================
+def load_or_train_model(df, animal_code, profile):
+    path = f"rf_model_{animal_code}.pkl"
+    if os.path.exists(path):
+        print(f"📦 Loaded existing ML model for {profile['name']}")
+        return joblib.load(path)
+
+    print(f"🧠 Training new ML model for {profile['name']}...")
+    vib_mean, vib_std = df.vib.mean(), df.vib.std()
+    X = df[['temp','pulse','resp','vib']]
+    y = [generate_label(row, profile, vib_mean, vib_std)
+         for _, row in df.iterrows()]
+
+    rf = RandomForestClassifier(n_estimators=150, max_depth=6, random_state=42)
+    rf.fit(X, y)
+    joblib.dump(rf, path)
+    print("💾 Model saved:", path)
+    return rf
+
+# =================================================
+# MAIN LOOP
+# =================================================
+try:
+    while True:
+        print("\n----------------------------------------------")
+
+        df = pd.read_csv(READ_CH1)
+        df = df[['created_at','field1','field2','field3','field4']]
+        df.columns = ['timestamp','temp','pulse','resp','vib']
+        df.dropna(inplace=True)
+
+        if len(df) < 15:
+            print("⏳ Waiting for sufficient sensor data...")
+            time.sleep(15)
+            continue
+
+        latest = df.iloc[-1]
+        ts = datetime.now()
+
+        ch2 = pd.read_csv(READ_CH2)
+        animal_code = int(ch2.iloc[-1]['field2']) if not pd.isna(ch2.iloc[-1]['field2']) else 0
+        profile = ANIMAL_PROFILES[animal_code]
+
+        if animal_code != current_animal:
+            print(f"🐾 Animal Selected: {profile['name']} (Code {animal_code})")
+            model = load_or_train_model(df, animal_code, profile)
+            stress_history.clear()
+            alert_counter = 0
+            normal_counter = 0
+            current_animal = animal_code
+
+        stress = int(model.predict([[latest.temp, latest.pulse, latest.resp, latest.vib]])[0])
+        stress_history.append(stress)
+
+        vib_mean, vib_std = df.vib.mean(), df.vib.std()
+        raw_alert = check_alert(animal_code, stress, latest.vib, vib_mean, vib_std)
+
+        if raw_alert:
+            alert_counter += 1
+            normal_counter = 0
+        else:
+            normal_counter += 1
+            if normal_counter >= COOLDOWN_THRESHOLD:
+                alert_counter = 0
+
+        final_alert = int(alert_counter >= ALERT_THRESHOLD)
+
+        # Logging
+        pd.DataFrame([{
+            "timestamp": ts, "animal_code": animal_code,
+            "temp": latest.temp, "pulse": latest.pulse,
+            "resp": latest.resp, "vib": latest.vib,
+            "stress": stress, "alert": final_alert
+        }]).to_csv(COMBINED_FILE, mode="a", header=False, index=False)
+
+        requests.post(WRITE_URL, {
+            "api_key": CH2_WRITE_KEY,
+            "field1": stress,
+            "field3": final_alert
+        })
+
+        print(f"📊 {profile['name']} | Stress={stress} | Alert={final_alert}")
+        print(f"📁 Data Logged | ⏱ {ts.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        time.sleep(15)
+
+except KeyboardInterrupt:
+    print("\n🛑 ML stopped by user")
+
+except Exception as e:
+    print("⚠️ ML Error:", e)
+
+finally:
+    reset_thingspeak_alert()
+    print("✅ ML System Shutdown Safely")
