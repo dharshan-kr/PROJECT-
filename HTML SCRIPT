@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Bioacoustic Livestock Monitoring</title>
+
+<!-- Libraries -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY"></script>
+
+<style>
+body{margin:0;font-family:Segoe UI;background:#eef2f5}
+.container{display:flex;height:100vh}
+
+/* SIDEBAR */
+.sidebar{
+ width:80px;background:#1b5e20;
+ display:flex;flex-direction:column;align-items:center;padding-top:20px
+}
+.sidebar .item{position:relative;margin-bottom:14px}
+.sidebar .dot{
+ position:absolute;top:6px;right:6px;
+ width:8px;height:8px;border-radius:50%;background:#4caf50
+}
+.sidebar button{
+ width:52px;height:52px;border:none;border-radius:50%;
+ font-size:20px;cursor:pointer;background:white
+}
+
+/* TOOLTIP */
+.tooltip{
+ position:relative;cursor:pointer
+}
+.tooltip::after{
+ content:attr(data-tip);
+ position:absolute;
+ left:70px;top:50%;
+ transform:translateY(-50%);
+ background:#333;color:#fff;
+ padding:4px 8px;border-radius:6px;
+ font-size:12px;white-space:nowrap;
+ opacity:0;pointer-events:none;
+ transition:0.2s;
+}
+.tooltip:hover::after{opacity:1}
+
+/* PAGES */
+.page{flex:1;display:none;padding:25px;overflow:auto}
+.card{
+ background:white;padding:18px;border-radius:16px;
+ box-shadow:0 4px 12px rgba(0,0,0,.15);
+ margin-bottom:20px;transition:.2s
+}
+.card:hover{transform:translateY(-2px)}
+
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px}
+.grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px}
+
+label{
+ font-weight:600;display:flex;align-items:center;gap:6px
+}
+input,select{
+ width:100%;padding:10px;border-radius:8px;
+ margin-bottom:12px;border:1px solid #ccc
+}
+input:focus,select:focus{outline:none;border-color:#1b5e20}
+
+button.action{
+ padding:10px 16px;border:none;border-radius:8px;
+ background:#1b5e20;color:white;cursor:pointer
+}
+button.action:disabled{background:#999;cursor:not-allowed}
+
+#map{height:300px;border-radius:12px}
+
+/* STRESS METER */
+.meter{
+ width:300px;height:150px;border-radius:150px 150px 0 0;
+ background:linear-gradient(to right,yellow,green,red);
+ position:relative
+}
+.needle{
+ width:4px;height:120px;background:black;
+ position:absolute;bottom:0;left:50%;
+ transform-origin:bottom
+}
+</style>
+</head>
+
+<body>
+<div class="container">
+
+<!-- SIDEBAR -->
+<div class="sidebar">
+ <div class="item tooltip" data-tip="Home"><span class="dot"></span><button onclick="show('p1')">🏠</button></div>
+ <div class="item tooltip" data-tip="Live Monitoring"><span class="dot"></span><button onclick="show('p2')">🐄</button></div>
+ <div class="item tooltip" data-tip="Stress Analysis"><span class="dot"></span><button onclick="show('p3')">🚨</button></div>
+ <div class="item tooltip" data-tip="Camera & GPS"><span class="dot"></span><button onclick="show('p4')">📷</button></div>
+ <div class="item tooltip" data-tip="About"><span class="dot"></span><button onclick="show('p5')">ℹ️</button></div>
+</div>
+
+<!-- PAGE 1 -->
+<div id="p1" class="page" style="background:url('https://images.unsplash.com/photo-1500595046743-cd271d694d30') center/cover">
+<div class="card" style="max-width:420px;margin:auto">
+<h2>👤 User Information</h2>
+<label>👤 Username</label><input placeholder="Enter username">
+<label>🆔 User ID</label><input placeholder="Enter user ID">
+<label>📅 Date</label><input id="date" disabled>
+<label>⏰ Time</label><input id="time" disabled>
+<label>📞 Emergency Mobile</label><input placeholder="Mobile number">
+</div>
+</div>
+
+<!-- PAGE 2 -->
+<div id="p2" class="page">
+<h2>🐄 Live Animal Monitoring</h2>
+
+<div class="card">
+<label>🐾 Animal</label>
+<select id="animal">
+<option value="0">Bovine (Cow 🐄)</option>
+<option value="1">Canine (Dog 🐕)</option>
+<option value="2">Equine (Horse 🐎)</option>
+<option value="3">Ovine (Sheep 🐑)</option>
+<option value="4">Caprine (Goat 🐐)</option>
+<option value="5">Feline (Cat 🐈)</option>
+<option value="6">Porcine (Pig 🐖)</option>
+</select>
+<label>🏷 Animal ID</label>
+<input placeholder="Editable Animal ID">
+</div>
+
+<div class="grid4">
+<div class="card tooltip" data-tip="Body Temperature">🌡 Temp: <b id="temp">--</b></div>
+<div class="card tooltip" data-tip="Heart Rate">❤️ Pulse: <b id="pulse">--</b></div>
+<div class="card tooltip" data-tip="Respiration Rate">🫁 Breathing: <b id="breath">--</b></div>
+<div class="card tooltip" data-tip="Body Vibration">🔊 Vibration: <b id="vib">--</b></div>
+</div>
+
+<div class="grid2">
+<div class="card"><canvas id="tempChart"></canvas></div>
+<div class="card"><canvas id="pulseChart"></canvas></div>
+<div class="card"><canvas id="breathChart"></canvas></div>
+<div class="card"><canvas id="vibChart"></canvas></div>
+</div>
+</div>
+
+<!-- PAGE 3 -->
+<div id="p3" class="page">
+<h2>🚨 Stress Analysis</h2>
+<div class="card">
+<div class="meter"><div id="needle" class="needle"></div></div>
+<p>Status: <b id="stressText">--</b></p>
+</div>
+<div class="card"><canvas id="stressChart"></canvas></div>
+</div>
+
+<!-- PAGE 4 -->
+<div id="p4" class="page">
+<h2>📷 Camera & GPS</h2>
+
+<div class="card">
+<button class="action tooltip" data-tip="Open live camera feed"
+ onclick="window.open('http://127.0.0.1:5000/videos')">
+ Open Camera
+</button>
+</div>
+
+<div class="card">
+<div id="map"></div><br>
+<button id="gpsBtn" class="action tooltip" data-tip="Open Google Maps with GPS" disabled>
+ Show Animal Location
+</button>
+<button class="action tooltip" data-tip="Stop alert sound" onclick="muteAlarm()">
+ Mute Alarm
+</button>
+</div>
+</div>
+
+<!-- PAGE 5 -->
+<div id="p5" class="page">
+<h2>ℹ️ About Us</h2>
+<div class="card">
+Bioacoustic Livestock Monitoring System using IoT + ML.<br>
+Real-time health, stress, GPS and alert monitoring.
+</div>
+</div>
+
+</div>
+
+<script>
+/* CONFIG */
+const CH1="https://api.thingspeak.com/channels/3250719/feeds.json?api_key=MNFBXHDDNAWFNT6A&results=20";
+const CH2="https://api.thingspeak.com/channels/3250740/feeds.json?api_key=3H8D8J44EPJ6T3R8&results=20";
+const WRITE="https://api.thingspeak.com/update?api_key=SG3EC4A5D8IBNBYY";
+
+/* PAGE SWITCH */
+function show(id){
+ document.querySelectorAll('.page').forEach(p=>p.style.display='none');
+ document.getElementById(id).style.display='block';
+}
+show('p1');
+
+/* DATE TIME */
+setInterval(()=>{
+ const d=new Date();
+ date.value=d.toDateString();
+ time.value=d.toLocaleTimeString();
+},1000);
+
+/* CHARTS */
+const tempChart=new Chart(document.getElementById("tempChart"),{type:"line",data:{labels:[],datasets:[{label:"Temp",data:[]}]}});
+const pulseChart=new Chart(document.getElementById("pulseChart"),{type:"line",data:{labels:[],datasets:[{label:"Pulse",data:[]}]}});
+const breathChart=new Chart(document.getElementById("breathChart"),{type:"line",data:{labels:[],datasets:[{label:"Breathing",data:[]}]}});
+const vibChart=new Chart(document.getElementById("vibChart"),{type:"line",data:{labels:[],datasets:[{label:"Vibration",data:[]}]}});
+const stressChart=new Chart(document.getElementById("stressChart"),{type:"line",data:{labels:[],datasets:[{label:"Stress",data:[]}]}});
+
+/* MAP DEFAULT */
+let lastLat,lastLng;
+new google.maps.Map(document.getElementById("map"),{zoom:2,center:{lat:0,lng:0}});
+
+/* ALARM */
+let alarm=new Audio("alarm.mp3");
+alarm.loop=true;
+function muteAlarm(){alarm.pause();}
+
+/* GPS BUTTON */
+const gpsBtn=document.getElementById("gpsBtn");
+gpsBtn.onclick=()=>window.open(`https://www.google.com/maps?q=${lastLat},${lastLng}`);
+
+/* LOAD DATA */
+async function load(){
+ const d=await fetch(CH1).then(r=>r.json());
+ const f=d.feeds;if(!f.length)return;
+ const l=f.at(-1);
+
+ temp.innerText=l.field1;
+ pulse.innerText=l.field2;
+ breath.innerText=l.field3;
+ vib.innerText=l.field4;
+
+ const labels=f.map(x=>new Date(x.created_at).toLocaleTimeString());
+ tempChart.data.labels=labels;
+ tempChart.data.datasets[0].data=f.map(x=>Number(x.field1));
+ pulseChart.data.labels=labels;
+ pulseChart.data.datasets[0].data=f.map(x=>Number(x.field2));
+ breathChart.data.labels=labels;
+ breathChart.data.datasets[0].data=f.map(x=>Number(x.field3));
+ vibChart.data.labels=labels;
+ vibChart.data.datasets[0].data=f.map(x=>Number(x.field4));
+ tempChart.update();pulseChart.update();breathChart.update();vibChart.update();
+
+ lastLat=Number(l.field5);
+ lastLng=Number(l.field6);
+ if(!isNaN(lastLat)&&!isNaN(lastLng)){
+  gpsBtn.disabled=false;
+  gpsBtn.innerText="Show Animal Location";
+ }
+
+ const s=await fetch(CH2).then(r=>r.json());
+ const sl=s.feeds.at(-1);
+ const level=Number(sl.field1);
+
+ stressChart.data.labels.push(new Date(sl.created_at).toLocaleTimeString());
+ stressChart.data.datasets[0].data.push(level);
+ stressChart.update();
+
+ needle.style.transform=`rotate(${[-90,0,90][level]}deg)`;
+ stressText.innerText=["LOW","NORMAL","HIGH"][level];
+
+ if(sl.field3==="1") alarm.play();
+}
+
+animal.onchange=()=>fetch(`${WRITE}&field2=${animal.value}`);
+setInterval(load,20000);
+</script>
+</body>
+</html>
