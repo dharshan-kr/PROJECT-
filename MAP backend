@@ -1,0 +1,175 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from geopy.geocoders import Nominatim
+import folium
+import pandas as pd
+import requests
+import threading
+import time
+from datetime import datetime
+from geopy.distance import geodesic
+
+app = Flask(__name__)
+CORS(app)
+
+# ============================================================
+# 1. LIVE CONFIGURATION (STAYS IN MEMORY - NO JSON FILE)
+# ============================================================
+# These values are updated via the Streamlit Setup Page
+RADAR_STATE = {
+    "safe": 500, 
+    "warning": 700, 
+    "danger": 1200, 
+    "lat": 11.3306, 
+    "lon": 77.7276, 
+    "address": "Awaiting Setup...", 
+    "last_status": "safe"
+}
+
+TELEGRAM_TOKEN = "8606700162:AAHCGqRrlhB8SSafSLlkiBtGjG1-oLK-mgQ"
+TELEGRAM_CHAT_ID = "-1003602900447"
+SYNC_URL = "https://api.thingspeak.com/channels/3250719/feeds.csv?results=1&api_key=MNFBXHDDNAWFNT6A"
+ANIMAL_NAME = "ELPH-01"
+
+def send_telegram_alert(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    try: requests.post(url, json=payload, timeout=5)
+    except: pass
+
+# ============================================================
+# 2. GPS TRACKING LOGIC
+# ============================================================
+def get_current_location():
+    """Fetches from Channel 1. Fallback to Home Base if empty."""
+    base_coords = [RADAR_STATE["lat"], RADAR_STATE["lon"]]
+    try:
+        df = pd.read_csv(SYNC_URL)
+        raw_lat = df['field5'].iloc[-1]
+        raw_lon = df['field6'].iloc[-1]
+        
+        if not pd.isna(raw_lat) and not pd.isna(raw_lon):
+            return [float(raw_lat), float(raw_lon)]
+        return base_coords
+    except:
+        return base_coords
+
+def telegram_gps_listener():
+    send_telegram_alert("🛰️ *RADAR CORE ONLINE*\nReady for Base Synchronization.")
+    last_update_id = 0
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates?offset={last_update_id + 1}&timeout=10"
+            response = requests.get(url, timeout=15).json()
+            if response.get("ok") and response.get("result"):
+                for update in response["result"]:
+                    last_update_id = update["update_id"]
+                    msg_data = update.get("channel_post") or update.get("message")
+                    if msg_data and "text" in msg_data:
+                        if msg_data["text"].lower().strip() == "gps":
+                            pos = get_current_location()
+                            reply = (f"🐾 *ASSET:* {ANIMAL_NAME}\n"
+                                     f"📍 *COORDS:* `{pos[0]}, {pos[1]}`\n"
+                                     f"⏰ *TIME:* {datetime.now().strftime('%H:%M:%S')}")
+                            send_telegram_alert(reply)
+        except: time.sleep(5)
+
+threading.Thread(target=telegram_gps_listener, daemon=True).start()
+
+# ============================================================
+# 3. API ENDPOINTS (CONNECTED TO SETUP PAGE)
+# ============================================================
+
+@app.route('/update_base', methods=['POST'])
+def update_base():
+    data = request.get_json()
+    try:
+        geolocator = Nominatim(user_agent="wildlife_v6")
+        location = geolocator.geocode(data.get("address"), timeout=10)
+        if location:
+            RADAR_STATE["lat"] = location.latitude
+            RADAR_STATE["lon"] = location.longitude
+            RADAR_STATE["address"] = data.get("address")
+            return jsonify({
+                "status": "success", 
+                "farm_location": {"lat": location.latitude, "lon": location.longitude}
+            }), 200
+        return jsonify({"status": "error", "message": "Location Not Found"}), 404
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/update_boundaries', methods=['POST'])
+def update_boundaries():
+    try:
+        data = request.get_json()
+        RADAR_STATE["safe"] = int(data.get("safe"))
+        RADAR_STATE["warning"] = int(data.get("warning"))
+        RADAR_STATE["danger"] = int(data.get("danger"))
+        return jsonify({"status": "success"})
+    except: return jsonify({"status": "error"}), 400
+
+# ============================================================
+# 4. RADAR MAP GENERATOR
+# ============================================================
+
+@app.route('/map', methods=['GET'])
+def get_map():
+    try:
+        hq = [RADAR_STATE["lat"], RADAR_STATE["lon"]]
+        animal = get_current_location()
+        dist = int(geodesic(hq, animal).meters)
+
+        # Zone Alert Logic
+        status = "safe"
+        if dist > RADAR_STATE["danger"]: status = "danger"
+        elif dist > RADAR_STATE["warning"]: status = "warning"
+
+        if status != RADAR_STATE["last_status"]:
+            if status == "warning": send_telegram_alert(f"⚠️ *WARN*: {ANIMAL_NAME} in Warning Zone ({dist}m)")
+            elif status == "danger": send_telegram_alert(f"🚨 *ALERT*: {ANIMAL_NAME} in Danger Zone ({dist}m)")
+            RADAR_STATE["last_status"] = status
+
+        # Build Map
+        m = folium.Map(location=hq, zoom_start=15, tiles='cartodbdarkmatter')
+        
+        # Draw Zones
+        folium.Circle(hq, radius=RADAR_STATE["safe"], color='#39FF14', fill=True, fill_opacity=0.05).add_to(m)
+        folium.Circle(hq, radius=RADAR_STATE["warning"], color='#FFFF00', fill=False, weight=3, dash_array='5, 5').add_to(m)
+        folium.Circle(hq, radius=RADAR_STATE["danger"], color='#FF3131', fill=False, weight=5).add_to(m)
+
+        # Add Markers
+        base_icon = f'''<div style="font-size: 30px; color: #00ffff; filter: drop-shadow(0 0 5px #00ffff);"><i class="fa fa-fort-awesome"></i></div>'''
+        folium.Marker(hq, icon=folium.DivIcon(html=base_icon)).add_to(m)
+        folium.Marker(animal, icon=folium.Icon(color='red', icon='paw', prefix='fa')).add_to(m)
+
+        # Tactical HUD
+        hud_html = f'''
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+        <style>
+            .hud {{ position: fixed; top: 15px; left: 15px; width: 260px; background: rgba(0, 15, 30, 0.95); border: 1px solid #00ffff; padding: 15px; color: #00ffff; z-index: 9999; font-family: monospace; box-shadow: 0 0 10px #00ffff; }}
+            input {{ background: #000; color: #00ffff; border: 1px solid #00ffff; width: 60px; text-align: center; margin: 2px; }}
+            .btn {{ background: #00ffff; color: #000; border: none; width: 100%; padding: 8px; font-weight: bold; cursor: pointer; margin-top: 10px; }}
+        </style>
+        <div class="hud">
+            <b>📡 RADAR HUD</b><hr style="border:0.5px solid #00ffff">
+            <div style="font-size: 11px; opacity: 0.8;">{RADAR_STATE['address'][:35]}</div>
+            <div style="font-size: 18px; margin: 10px 0;">RANGE: {dist}m</div>
+            SAFE: <input type="number" id="s" value="{RADAR_STATE['safe']}"><br>
+            WARN: <input type="number" id="w" value="{RADAR_STATE['warning']}"><br>
+            DANG: <input type="number" id="d" value="{RADAR_STATE['danger']}"><br>
+            <button class="btn" onclick="sync()">UPDATE SETTINGS</button>
+        </div>
+        <script>
+        async function sync() {{
+            const data = {{ safe: document.getElementById('s').value, warning: document.getElementById('w').value, danger: document.getElementById('d').value }};
+            await fetch('/update_boundaries', {{ method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify(data) }});
+            location.reload();
+        }}
+        </script>
+        '''
+        m.get_root().html.add_child(folium.Element(hud_html))
+        return m._repr_html_()
+    except Exception as e: return f"<h3>System Error: {e}</h3>"
+
+if __name__ == '__main__':
+    app.run(port=5001)
