@@ -1,0 +1,122 @@
+from flask import Flask, Response
+import cv2
+from ultralytics import YOLO
+import requests
+import os
+import threading
+import time
+from datetime import datetime
+
+app = Flask(__name__)
+
+# --- CONFIGURATION ---
+TELEGRAM_TOKEN = "8606700162:AAHCGqRrlhB8SSafSLlkiBtGjG1-oLK-mgQ"
+TELEGRAM_CHAT_ID = "-1003602900447"
+ALLOWED_CLASSES = [0, 15, 16, 17, 18, 19]
+
+# Branding Settings
+PROJECT_NAME = "WILDLIFE MONITORING"
+UI_COLOR = (0, 255, 0)  # Neon Green
+TARGET_COLOR = (255, 255, 0) # Cyan for targets
+
+# --- GLOBAL VARIABLES ---
+model = YOLO("yolov8n.pt")
+cap = cv2.VideoCapture(0)
+latest_frame = None 
+
+def send_telegram_msg(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    try: requests.post(url, json=payload, timeout=5)
+    except: pass
+
+def send_telegram_photo(image_path, caption):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+    try:
+        with open(image_path, 'rb') as photo:
+            requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'caption': caption, 'parse_mode': 'Markdown'}, files={'photo': photo})
+    except Exception as e:
+        print(f"Photo Error: {e}")
+
+# --- TELEGRAM COMMAND LISTENER ---
+def telegram_listener():
+    last_update_id = 0
+    print("🛰️ SYSTEM: Tactical Link Established...")
+    send_telegram_msg(f"◈ *SYSTEM ONLINE* ◈\nProject: {PROJECT_NAME}\nMode: Manual Capture Only")
+
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates?offset={last_update_id + 1}&timeout=20"
+            response = requests.get(url, timeout=25).json()
+            if response.get("ok") and response.get("result"):
+                for update in response["result"]:
+                    last_update_id = update["update_id"]
+                    msg_data = update.get("channel_post") or update.get("message")
+                    if msg_data and "text" in msg_data:
+                        text = msg_data["text"].lower()
+                        if "capture" in text:
+                            if latest_frame is not None:
+                                cv2.imwrite("tactical_capture.jpg", latest_frame)
+                                timestamp = datetime.now().strftime("%H:%M:%S")
+                                send_telegram_photo("tactical_capture.jpg", f"📸 *INTEL RECEIVED*\nTime: {timestamp}\nStatus: Target Documented")
+                            else:
+                                send_telegram_msg("⚠️ ERROR: Optical sensor warming up.")
+        except: time.sleep(2)
+
+threading.Thread(target=telegram_listener, daemon=True).start()
+
+def generate_frames():
+    global latest_frame
+    while True:
+        success, frame = cap.read()
+        if not success: break
+        
+        results = model(frame, conf=0.55, classes=ALLOWED_CLASSES, verbose=False)
+        annotated = frame.copy()
+
+        # 1. DRAW TARGETS (YOLO Boxes)
+        for r in results:
+            for box in r.boxes:
+                cls_id = int(box.cls[0])
+                label = model.names[cls_id]
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+
+                # Tactical Corners (instead of full box for 'pro' look)
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), TARGET_COLOR, 1)
+                cv2.putText(annotated, f"TRK_{label.upper()}", (x1, y1 - 8), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, TARGET_COLOR, 1)
+
+        # 2. CREATE SEMI-TRANSPARENT HUD OVERLAY
+        h, w = annotated.shape[:2]
+        overlay = annotated.copy()
+        # Top Bar
+        cv2.rectangle(overlay, (0, 0), (w, 50), (0, 0, 0), -1)
+        # Apply transparency
+        cv2.addWeighted(overlay, 0.5, annotated, 0.5, 0, annotated)
+
+        # 3. HUD TEXT (Top Left & Top Right)
+        timestamp = datetime.now().strftime("%Y-%m-%d | %H:%M:%S")
+        
+        # Project Info
+        cv2.putText(annotated, f"◈ {PROJECT_NAME}", (20, 32), 
+                    cv2.FONT_HERSHEY_DUPLEX, 0.7, UI_COLOR, 1)
+        
+        # Time & Status
+        cv2.putText(annotated, timestamp, (w - 240, 32), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+        
+        # Blinking "Recording" Dot
+        if int(time.time()) % 2 == 0:
+            cv2.circle(annotated, (w - 260, 25), 5, (0, 0, 255), -1)
+
+        latest_frame = annotated 
+
+        ret, buffer = cv2.imencode(".jpg", annotated)
+        yield (b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n")
+
+@app.route("/video")
+def video():
+    return Response(generate_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, threaded=True)
