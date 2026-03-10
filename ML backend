@@ -1,0 +1,496 @@
+# ============================================================
+# Wildlife Monitoring AI - Master Build v3.9.1 (REPAIRED)
+# INTEGRATED WITH: 🤖 LEON AI v0.1 (Global & Asset Context)
+# ============================================================
+
+import streamlit as st
+import pandas as pd
+import requests
+import numpy as np
+import plotly.express as px
+from datetime import datetime, timedelta, date
+import io
+import re
+import os
+from streamlit_autorefresh import st_autorefresh
+from langchain_ollama import OllamaLLM
+
+# ============================================================
+# PAGE CONFIGURATION
+# ============================================================
+
+st.set_page_config(
+    page_title="Wildlife AI | Command Center",
+    layout="wide",
+    page_icon="🐾"
+)
+
+# ============================================================
+# PROFESSIONAL COMMAND CENTER CSS
+# ============================================================
+
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif;
+}
+/* Solid Dark Theme */
+.stApp {
+    background-color: #0e1117 !important;
+    background-image: none !important;
+    color: #e0e0e0;
+}
+/* LEON Chat Styling */
+.stChatMessage {
+    border-radius: 12px;
+    margin-bottom: 10px;
+    border: 1px solid #30363d;
+}
+.stChatMessage[data-testid="stChatMessageAssistant"] {
+    background-color: #161b22;
+    border-left: 4px solid #58a6ff;
+}
+/* Metric Card Styling */
+div[data-testid="stMetric"] {
+    background: #161b22;
+    padding: 18px;
+    border-radius: 10px;
+    border: 1px solid #30363d;
+}
+[data-testid="stMetricValue"] {
+    color: #58a6ff;
+    font-size: 1.8rem !important;
+}
+/* Buttons */
+.stButton>button {
+    border-radius: 6px;
+    border: 1px solid #30363d;
+    background-color: #21262d;
+    color: #c9d1d9;
+    font-weight: 600;
+    transition: 0.2s;
+}
+.stButton>button:hover {
+    border-color: #58a6ff;
+    color: #58a6ff;
+    background-color: #30363d;
+}
+/* Informational Containers */
+.status-card {
+    background: #161b22;
+    padding: 20px;
+    border-radius: 12px;
+    border: 1px solid #30363d;
+    margin-bottom: 20px;
+}
+/* Header Alignment Fix */
+.header-box {
+    padding-bottom: 20px;
+    border-bottom: 1px solid #30363d;
+    margin-bottom: 30px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ============================================================
+# CORE LOGIC & AI HELPERS
+# ============================================================
+
+try:
+    llm = OllamaLLM(model="llama3")
+except Exception:
+    llm = None
+
+def get_leon_response(prompt, vitals):
+    if not llm: return "LEON Offline. Please check Ollama connection."
+    context = f"Current Vitals: Temp {vitals.get('temp')}C, Pulse {vitals.get('pulse')}BPM, Resp {vitals.get('resp')}RPM."
+    return llm.invoke(f"System: You are LEON, a wildlife expert. {context} User: {prompt}")
+
+def get_global_leon_report(prompt, fleet_data):
+    if not llm: return "Global Scan Unavailable."
+    return llm.invoke(f"Analyze this fleet data and report abnormalities: {fleet_data}")
+
+# ============================================================
+# THINGSPEAK CONFIGURATION
+# ============================================================
+
+CH1_ID = 3250719
+CH1_READ_KEY = "MNFBXHDDNAWFNT6A"
+
+READ_CH1_FULL = f"https://api.thingspeak.com/channels/{CH1_ID}/feeds.csv?results=40&api_key={CH1_READ_KEY}"
+READ_CH1_LATEST = f"https://api.thingspeak.com/channels/{CH1_ID}/feeds.csv?results=1&api_key={CH1_READ_KEY}"
+
+# ============================================================
+# DATA FETCH FUNCTIONS
+# ============================================================
+
+def fetch_sensor_data() -> pd.DataFrame:
+    try:
+        df = pd.read_csv(READ_CH1_FULL)
+        if df.empty: return pd.DataFrame()
+        rename_dict = {'created_at': 'timestamp', 'field1': 'temp', 'field2': 'pulse', 'field3': 'resp', 'field4': 'vib'}
+        df = df.rename(columns=rename_dict)
+        df.dropna(subset=['temp', 'pulse', 'resp', 'vib'], inplace=True)
+        df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize(None)
+        return df
+    except:
+        return pd.DataFrame()
+
+def fetch_now():
+    try:
+        df = pd.read_csv(READ_CH1_LATEST)
+        if df.empty: return {"temp": 0, "pulse": 0, "resp": 0, "vib": 0}
+        return {
+            "temp": df['field1'].iloc[-1],
+            "pulse": df['field2'].iloc[-1],
+            "resp": df['field3'].iloc[-1],
+            "vib": df['field4'].iloc[-1]
+        }
+    except:
+        return {"temp": 0, "pulse": 0, "resp": 0, "vib": 0}
+
+# ============================================================
+# SESSION STATE INITIALIZATION
+# ============================================================
+
+if "page" not in st.session_state:
+    st.session_state.page = "setup"
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if "stress_history_df" not in st.session_state:
+    st.session_state.stress_history_df = pd.DataFrame(columns=["timestamp", "stress"])
+
+if "current_fleet_data" not in st.session_state:
+    st.session_state.current_fleet_data = {}
+
+if "calendar_data" not in st.session_state:
+    st.session_state.calendar_data = pd.DataFrame([
+        {"Date": date.today(), "Asset ID": "TBD", "Event Type": "Check-up", "Priority": "Medium"}
+    ])
+
+# ============================================================
+# UNIVERSAL SIDEBAR - LEON AI & PRESENTATION TOOLS
+# ============================================================
+
+if st.session_state.page != "setup":
+    with st.sidebar:
+        selected_cat = st.session_state.get("selected_category", "Cow")
+        # Ensure name matches Backend format
+        clean_animal = selected_cat.split()[-1].upper() if " " in selected_cat else selected_cat.upper()
+        emergency_phone = st.session_state.get("emergency", "+910000000000")
+        
+        st.markdown("<h2 style='text-align: center;'>🤖 LEON <small style='font-size:12px;'>v0.1</small></h2>", unsafe_allow_html=True)
+        
+        if st.session_state.page == "monitor":
+            target = st.session_state.get("selected_animal_id", "None")
+            st.info(f"Context: Monitoring **{target}** ({selected_cat})")
+        else:
+            st.write("### 🔍 Fleet Intelligence")
+            if st.button("Scan All Assets for Abnormalities", use_container_width=True):
+                with st.spinner("Analyzing fleet-wide biometrics..."):
+                    all_vitals = st.session_state.get("current_fleet_data", {})
+                    report = get_global_leon_report("Analyze Fleet", all_vitals)
+                    st.session_state.messages.append({"role": "assistant", "content": report})
+                st.rerun()
+
+        st.divider()
+
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        if chat_input := st.chat_input("Ask LEON anything..."):
+            st.session_state.messages.append({"role": "user", "content": chat_input})
+            with st.spinner("LEON is analyzing..."):
+                if st.session_state.page == "monitor":
+                    vitals = st.session_state.get("current_screen_vitals", fetch_now())
+                    response = get_leon_response(chat_input, vitals)
+                else:
+                    response = "I'm monitoring the fleet. Specify an ID or go to a monitor page for deep analysis."
+            st.session_state.messages.append({"role": "assistant", "content": response})
+            st.rerun()
+
+        st.divider()
+        st.subheader("🛠 Presentation Tools")
+        
+        if st.button("🔄 Re-train AI Model Now", use_container_width=True):
+            with st.spinner(f"AI is re-fitting for {clean_animal}..."):
+                reset_url = f"http://127.0.0.1:8000/stress?animal={clean_animal}&emergency={emergency_phone}&reset=true"
+                try:
+                    requests.get(reset_url, timeout=5)
+                    st.toast(f"Random Forest Re-trained for {clean_animal}!", icon="🌲")
+                except Exception as e:
+                    st.error("ML Backend Offline. Check Port 8000.")
+
+
+# ============================================================
+# PAGE: SETUP (OPTIMIZED LOCATION)
+# ============================================================
+
+if st.session_state.page == "setup":
+    st.markdown("<h1 style='color: #58a6ff;'>🌿 Command Center Setup</h1>", unsafe_allow_html=True)
+    
+    # --- ADMIN INFO ---
+    st.subheader("👤 Administrative Personnel")
+    c1, c2 = st.columns(2)
+    with c1:
+        un = st.text_input("Administrator Name", placeholder="e.g. GREY")
+        uid = st.text_input("System ID", placeholder="e.g. TN-FARM-01")
+    with c2:
+        em = st.text_input("Alert Email")
+        mob = st.text_input("Emergency Mobile (10-digits)")
+
+    st.divider()
+
+    # --- SIMPLIFIED LOCATION SETUP ---
+    st.subheader("📍 Geofence Configuration")
+    st.info("The City and District provided will set the 'Home Base' for GPS tracking.")
+    
+    loc_c1, loc_c2 = st.columns(2)
+    with loc_c1:
+        city_input = st.text_input("City Name", placeholder="e.g. Erode")
+    with loc_c2:
+        dist_input = st.text_input("District Name", placeholder="e.g. Coimbatore District")
+
+    full_address = f"{city_input}, {dist_input}, Tamil Nadu, India"
+
+    st.divider()
+
+    # --- ASSET REGISTRATION ---
+    st.subheader("🐾 Asset Registration")
+    animal_options = ["🐄 Cow", "🐕 Dog", "🐎 Horse", "🐑 Sheep", "🐐 Goat", "🐈 Cat", "🐖 Pig", "🐔 Poultry"]
+    sel = {}
+    cols = st.columns(4)
+    for i, a in enumerate(animal_options):
+        with cols[i % 4]:
+            if st.checkbox(a):
+                limit = 100 if "Poultry" in a else 50
+                sel[a] = st.number_input(f"Qty: {a}", 1, limit, key=f"q_{a}")
+
+    st.divider()
+
+    # --- INITIALIZE SYSTEM ---
+    if st.button("🚀 Initialize & Sync Command Center", use_container_width=True):
+        if un and uid and city_input and sel:
+            
+            # 1. Prepare ML Payload
+            backend_list = [a.split()[-1].upper() for a in sel.keys()]
+            ml_payload = {
+                "animals": backend_list,
+                "emergency": "+91" + mob if mob else "+910000000000"
+            }
+            
+            # 2. Prepare Map Payload
+            map_payload = {"address": full_address}
+            
+            with st.spinner("📡 Synchronizing Dual Backends..."):
+                try:
+                    # Sync ML Backend
+                    ml_res = requests.post("http://127.0.0.1:8000/setup", json=ml_payload, timeout=5)
+                    # Sync Map Backend
+                    map_res = requests.post("http://127.0.0.1:5001/update_base", json=map_payload, timeout=10)
+                    
+                    if ml_res.status_code == 200 and map_res.status_code == 200:
+                        st.session_state.username = un
+                        st.session_state.userid = uid
+                        st.session_state.email = em
+                        st.session_state.emergency = "+91" + mob if mob else "Not Set"
+                        st.session_state.animals = sel
+                        st.session_state.farm_coords = map_res.json().get("farm_location", {})
+                        
+                        st.session_state.page = "dashboard"
+                        st.balloons()
+                        st.rerun()
+                    else:
+                        st.error("One or more backends failed to initialize. Ensure Ports 8000 and 5001 are Active.")
+                except Exception as e:
+                    st.error(f"Sync Failed: Connectivity issue. {e}")
+        else:
+            st.warning("Please provide Administrator details, City, and select at least one Asset.")
+
+# ============================================================
+# PAGE: DASHBOARD
+# ============================================================
+
+elif st.session_state.page == "dashboard":
+    all_vitals = {
+        "H001": fetch_now(),
+        "D001": {"temp": 37.5, "pulse": 75, "resp": 20, "vib": 10},
+        "C001": {"temp": 40.2, "pulse": 110, "resp": 30, "vib": 250}
+    }
+    st.session_state.current_fleet_data = all_vitals
+    col_title, col_about = st.columns([9, 1])
+    with col_title:
+        st.markdown(f"<div class='header-box'><h1 style='margin:0;'>🐾 Fleet Overview: {st.session_state.username}</h1><p style='color:#8b949e;'>System ID: {st.session_state.userid} | Emergency: {st.session_state.emergency}</p></div>", unsafe_allow_html=True)
+    with col_about:
+        if st.button("ℹ️", use_container_width=True):
+            st.session_state.page = "about"
+            st.rerun()
+    
+    cols = st.columns(3)
+    for i, (animal, count) in enumerate(st.session_state.animals.items()):
+        with cols[i % 3]:
+            st.markdown(f"### {animal}")
+            if st.button(f"Manage {count} Assets", key=f"btn_{animal}", use_container_width=True):
+                st.session_state.selected_category, st.session_state.page = animal, "animal_list"
+                st.rerun()
+
+# ============================================================
+# PAGE: ANIMAL LIST
+# ============================================================
+
+elif st.session_state.page == "animal_list":
+    cat = st.session_state.selected_category
+    qty = st.session_state.animals[cat]
+    prefix = cat.split()[1][0].upper() if " " in cat else "A"
+    available_ids = [f"{prefix}{str(i + 1).zfill(3)}" for i in range(qty)]
+
+    col_h1, col_h2 = st.columns([5, 1])
+    with col_h1: st.markdown(f"<h1 style='color: #58a6ff;'>{cat} Inventory Console</h1>", unsafe_allow_html=True)
+    with col_h2:
+        if st.button("⬅ Back", use_container_width=True):
+            st.session_state.page = "dashboard"
+            st.rerun()
+
+    col_info, col_calendar = st.columns([1, 2.2])
+    with col_info:
+        st.markdown(f'<div class="status-card"><h3 style="margin-top:0;">Asset Insights</h3><p><b>Group:</b> {cat}</p><p><b>Quantity:</b> {qty}</p><p><b>Status:</b> <span style="color:#3fb950;">Operational</span></p></div>', unsafe_allow_html=True)
+    with col_calendar:
+        st.markdown("### 📅 Interactive Management Calendar")
+        st.session_state.calendar_data = st.data_editor(st.session_state.calendar_data, num_rows="dynamic", column_config={"Date": st.column_config.DateColumn("Event Date", required=True), "Asset ID": st.column_config.SelectboxColumn("Asset ID", options=available_ids, required=True), "Priority": st.column_config.SelectboxColumn("Priority", options=["Low", "Medium", "High", "Critical"])}, use_container_width=True, key="calendar_editor")
+
+    st.divider()
+    st.subheader("Select Tag for Real-Time Streaming")
+    grid_cols = st.columns(10 if qty > 50 else 6)
+    for i in range(qty):
+        tag_id = available_ids[i]
+        with grid_cols[i % len(grid_cols)]:
+            if st.button(tag_id, use_container_width=True):
+                st.session_state.selected_animal_id, st.session_state.page = tag_id, "monitor"
+                st.rerun()
+
+# ============================================================
+# PAGE: MONITOR (WITH DYNAMIC ML SYNC)
+# ============================================================
+
+elif st.session_state.page == "monitor":
+    st_autorefresh(interval=30000, key="datarefresh")
+    tag = st.session_state.selected_animal_id
+    live_data, df_hist = fetch_now(), fetch_sensor_data()
+    st.session_state.current_screen_vitals = live_data
+
+    # --- ML API SYNC ---
+    try:
+        raw_cat = st.session_state.get("selected_category", "COW")
+        animal_type = raw_cat.split()[-1].upper() if " " in raw_cat else raw_cat.upper()
+        emergency_phone = st.session_state.get("emergency", "+910000000000")
+        
+        api_url = f"http://127.0.0.1:8000/stress?animal={animal_type}&emergency={emergency_phone}"
+        response = requests.get(api_url, timeout=3)
+        ml_data = response.json()
+        
+        if ml_data.get("status") == "Syncing...":
+            st.session_state.current_status_text = "Syncing..."
+            st.session_state.current_stress_idx = 0
+            st.session_state.current_confidence = "0%"
+            st.session_state.backend_reason = "Initial 20s scan in progress..."
+        else:
+            st.session_state.current_stress_idx = ml_data.get('stress_level', 0)
+            st.session_state.current_confidence = ml_data.get('ai_confidence', "0%")
+            st.session_state.current_status_text = ml_data.get('status', "Unknown")
+            st.session_state.backend_reason = ml_data.get('expert_analysis', "No analysis available.")
+        
+        backend_online = True
+    except Exception as e:
+        backend_online = False
+        st.session_state.current_status_text = "Backend Offline"
+        st.session_state.backend_reason = "Check Port 8000."
+
+    # --- Header UI ---
+    col_h1, col_h2, col_h3, col_h4 = st.columns([3, 1, 1, 1])
+    with col_h1: st.markdown(f"<h1 style='color: #58a6ff;'>📡 Stream: {tag}</h1>", unsafe_allow_html=True)
+    with col_h2: st.link_button("📍 Map", f"http://127.0.0.1:5001/map?animal={tag}", use_container_width=True)
+    with col_h3: st.link_button("📷 Detect", f"http://127.0.0.1:5000/video", use_container_width=True)
+    with col_h4:
+        if st.button("⬅ Back", use_container_width=True):
+            st.session_state.page = "animal_list"
+            st.rerun()
+
+    if not backend_online:
+        st.error("⚠️ ML BACKEND OFFLINE. Start the Flask server on port 8000.")
+
+    # --- Metrics Display ---
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("🌡 Temperature", f"{live_data['temp']}°C")
+    m2.metric("❤️ Pulse", f"{live_data['pulse']} BPM")
+    m3.metric("🫁 Respiration", f"{live_data['resp']} RPM")
+    m4.metric("📳 Vibration", live_data['vib'])
+
+    colors_hex = {0: "#58a6ff", 1: "#3fb950", 2: "#f85149"}
+    led_icons = ["🟢", "🟡", "🔴"]
+    stress_val = st.session_state.current_stress_idx
+    current_color = colors_hex.get(stress_val, "#3fb950")
+    current_led = led_icons[stress_val] if stress_val < len(led_icons) else "⚪"
+
+    # --- Status Card ---
+    st.markdown(f"""
+        <div style="background:#161b22; padding:25px; border-radius:12px; border: 1px solid #30363d; margin-bottom: 20px;">
+            <div style="display:flex; align-items:center; gap:20px; margin-bottom:15px;">
+                <div style="width:26px;height:26px;background-color:{current_color};border-radius:50%;box-shadow:0 0 15px {current_color};border:2px solid white;"></div>
+                <span style="font-size:1.3rem;font-weight:700;color:{current_color};">{current_led} {st.session_state.current_status_text}</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 2fr;gap:30px;">
+                <div style="border-right:1px solid #30363d;">
+                    <p style="color:#8b949e;font-size:0.9rem;">MODEL CONFIDENCE</p>
+                    <h2 style="margin:0;">{st.session_state.current_confidence}</h2>
+                    <p style='color:#8b949e; font-size: 0.8rem; margin-top:5px;'>Alerting: {st.session_state.emergency}</p>
+                </div>
+                <div>
+                    <p style="color:#8b949e;font-size:0.9rem;">EXPERT ANALYSIS</p>
+    """, unsafe_allow_html=True)
+
+    if backend_online:
+        if stress_val == 2: st.error(st.session_state.backend_reason)
+        elif stress_val == 1: st.warning(st.session_state.backend_reason)
+        else: st.success(st.session_state.backend_reason)
+    else:
+        st.info("Awaiting Backend Link...")
+
+    st.markdown("</div></div></div>", unsafe_allow_html=True)
+
+    new_entry = pd.DataFrame([{"timestamp": datetime.now(), "stress": stress_val}])
+    st.session_state.stress_history_df = pd.concat([st.session_state.stress_history_df, new_entry], ignore_index=True).tail(50)
+
+    st.divider()
+    c1, c2 = st.columns(2)
+    with c1:
+        st.plotly_chart(px.line(df_hist, x="timestamp", y="temp", title="Temperature Trend", template="plotly_dark").update_traces(line_color='#58a6ff'), use_container_width=True)
+        st.plotly_chart(px.line(df_hist, x="timestamp", y="resp", title="Respiration Trend", template="plotly_dark").update_traces(line_color='#3fb950'), use_container_width=True)
+    with c2:
+        st.plotly_chart(px.line(df_hist, x="timestamp", y="pulse", title="Heart Rate Trend", template="plotly_dark").update_traces(line_color='#f85149'), use_container_width=True)
+        st.plotly_chart(px.line(df_hist, x="timestamp", y="vib", title="Vibration Intensity", template="plotly_dark").update_traces(line_color='#d29922'), use_container_width=True)
+
+    st.plotly_chart(px.bar(st.session_state.stress_history_df, x="timestamp", y="stress", title="Predictive Stress Timeline (Real-time ML Data)", template="plotly_dark", color_discrete_sequence=[current_color]).update_yaxes(range=[-0.5, 2.5], tickvals=[0, 1, 2]), use_container_width=True)
+
+# ============================================================
+# PAGE: ABOUT
+# ============================================================
+
+elif st.session_state.page == "about":
+    st.title("ℹ️ About System")
+    st.markdown("""
+### Wildlife AI Monitoring System v3.9.1
+Advanced Intelligence Suite integrated with **🤖 LEON AI v0.1**
+- **ThingSpeak Integration** – Real-time biometric IoT data ingestion
+- **Global Fleet Scan** – AI analysis of all assets
+- **Contextual AI Assistant** – Real-time dialogue with LEON
+- **Predictive Stress Mapping** – Random Forest ML classification
+- **Geofence Control** – Automated GPS boundary alerts
+- **YOLO Detection** – Integrated visual identification support
+""")
+    if st.button("⬅ Back to Dashboard", use_container_width=True):
+        st.session_state.page = "dashboard"
+        st.rerun()
